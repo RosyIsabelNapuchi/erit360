@@ -181,7 +181,7 @@ textarea.pk{width:100%;height:110px;font:12px monospace;border:1px solid var(--l
 
 .pulse{background:linear-gradient(145deg,#25282D,#353A40);color:#fff;border-radius:22px;padding:18px;box-shadow:0 10px 28px #0002;display:flex;flex-direction:column;gap:14px}
 .pulse .eyebrow{font:800 12px var(--f-body);text-transform:uppercase;letter-spacing:.09em;color:#FFC2A4}
-.pulse h3{font-size:30px}.pulse .mut{color:#ffffffbf}
+.pulse h3{font-size:30px}.pulse .mut{color:#ffffffbf}.pulse .btn:not(.pri){color:var(--fg)}
 .pulse-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:7px}
 .pulse-m{background:#ffffff10;border:1px solid #ffffff20;border-radius:13px;padding:9px 7px;text-align:center;min-width:0}
 .pulse-m b{display:block;font:700 24px/1 var(--f-head);font-variant-numeric:tabular-nums}.pulse-m span{display:block;font-size:10.5px;color:#ffffffc7;margin-top:4px;line-height:1.1}
@@ -284,6 +284,7 @@ const fmtS=n=>n>=1e6?(n/1e6).toFixed(2)+' M':n>=1e3?Math.round(n/1e3)+' mil':Str
 const fmtD=s=>{const d=new Date(s+'T12:00:00');return ['dom','lun','mar','mié','jue','vie','sáb'][d.getDay()]+' '+d.getDate()+'/'+(d.getMonth()+1)};
 const pct=(a,b)=>b?Math.round(a*100/b):0;
 const clone=o=>JSON.parse(JSON.stringify(o));
+const unw=o=>o&&typeof o.j==='string'?JSON.parse(o.j):clone(o);
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 const KEY='erit360.sanmiguel.v1';
 function load(){try{return JSON.parse(localStorage.getItem(KEY))}catch(e){return null}}
@@ -306,7 +307,7 @@ function defaultTeam(){
 let S=load();
 if(!S){S={v:3,role:null,me:null,date:todayStr(),start:todayStr(),team:defaultTeam(),teamU:0,tasks:[],inc:[],hideNote:false,seeded:false,targets:{plan:95,crit:95,fpy:90,carry:10,sla:90}}}
 S.targets=Object.assign({plan:95,crit:95,fpy:90,carry:10,sla:90},S.targets||{});
-const UI={tab:null,mode:'avance',gmode:'ruta',filter:'todas',range:'7d',open:{},shot:null,ck:{},incType:'precio',lock:false};
+const UI={tab:null,mode:'avance',gmode:'ruta',filter:'todas',range:'hoy',open:{},shot:null,ck:{},incType:'precio',lock:false};
 UI.tab=S.role==='ges'?'ruta':'hoy';
 
 const person=id=>S.team.find(p=>p.id===id);
@@ -339,25 +340,16 @@ const qTag=t=>{const q=quad(t);return q?`<span class="qt ${q}">${QN[q][0]}</span
 /* ===== Sincronización en vivo (db) ===== */
 let DB=null;const SYNC={s:'off'};
 const PEND=new Map();let busy=false;
-function dbPut(path,obj){if(!DB)return;PEND.set(path,clone(obj));pump()}
-async function pump(){
-  if(busy)return;busy=true;
-  while(PEND.size&&DB){
-    const batch=[...PEND.entries()].slice(0,8);batch.forEach(([p])=>PEND.delete(p));
-    let stop='';
-    await Promise.all(batch.map(async([p,o])=>{
-      try{await DB.doc(p).set(o)}
-      catch(e){const c=e&&e.code;
-        if(c==='resource_exhausted'||c==='resource-exhausted'||c==='unavailable'){if(!PEND.has(p))PEND.set(p,o);stop=stop||'wait'}
-        else if(c==='invalid_argument'||c==='permission-denied'){if(p.indexOf('team/')===0)return;SYNC.s='ro';PEND.clear();hdr();toast('No tienes permiso para guardar. Avisa a tu supervisora.');stop='ro'}
-        else if(c==='quota_exceeded'){toast('Se llenó el almacenamiento');PEND.clear();stop='ro'}}
-    }));
-    if(stop==='ro')break;if(stop==='wait')await sleep(1500);
-  }
-  busy=false;
-}
+function dbErr(p,e){const c=e&&e.code;if(p.indexOf('team/')===0)return;
+  if(c==='permission-denied'||c==='invalid_argument')toast('Ese cambio no se guardó: no tienes permiso.');
+  else if(c==='resource-exhausted'||c==='quota_exceeded')toast('Se llenó el almacenamiento. Avisa a tu supervisora.');}
+function dbPut(path,obj){if(!DB)return;try{DB.doc(path).set(clone(obj)).catch(e=>dbErr(path,e))}catch(e){dbErr(path,e)}}
+function dbPatch(path,obj){if(!DB)return;try{DB.doc(path).update(clone(obj)).catch(e=>dbErr(path,e))}catch(e){dbErr(path,e)}}
 const pt=t=>{t.u=Date.now();dbPut('tasks/'+t.id,t)};
 const pi=i=>{i.u=Date.now();dbPut('inc/'+i.id,i)};
+/* El gestor solo envía los campos que le corresponden (las reglas rechazan el resto) */
+const ptK=(t,keys)=>{t.u=Date.now();if(isSup()){dbPut('tasks/'+t.id,t);return}const o={u:t.u};keys.forEach(k=>o[k]=t[k]==null?null:t[k]);dbPatch('tasks/'+t.id,o)};
+const piK=(i,keys)=>{i.u=Date.now();if(isSup()){dbPut('inc/'+i.id,i);return}const o={u:i.u};keys.forEach(k=>o[k]=i[k]==null?null:i[k]);dbPatch('inc/'+i.id,o)};
 function pteam(){S.teamU=Date.now();dbPut('team/main',{list:S.team,u:S.teamU})}
 function mergeOne(arr,d){
   const i=arr.findIndex(x=>x.id===d.id);
@@ -376,7 +368,7 @@ function softRender(){
 async function initSync(db){
   try{
     DB=db;SYNC.s='on';hdr();
-    const t0=addDays(todayStr(),-7),i0=addDays(todayStr(),-30);
+    const t0=addDays(todayStr(),(typeof canSup==='function'&&canSup())?-7:-1),i0=addDays(todayStr(),-30);
     let f1=true,f2=true;
     DB.collection('tasks').where('date','>=',t0).onSnapshot(snap=>{
       let ch=false;const rem=new Map();
@@ -402,7 +394,8 @@ async function initSync(db){
 }
 function hdr(){
   $('#sdot').className='dot '+(SYNC.s==='on'?'on':SYNC.s==='ro'?'ro':'');
-  $('#stxt').textContent='Promart San Miguel · '+(SYNC.s==='on'?'en vivo':SYNC.s==='ro'?'solo lectura':'solo este teléfono');
+  const off=!navigator.onLine;if(off)$('#sdot').className='dot ro';
+  $('#stxt').textContent=(window.STORE_NAME||'San Miguel')+' · '+(off?'sin señal, se guarda al volver':SYNC.s==='on'?'en vivo':SYNC.s==='ro'?'solo lectura':'solo este teléfono');
 }
 
 /* ===== Plan del día (reparte según ventas por área) ===== */
@@ -430,7 +423,7 @@ function genDay(date){
   add('vencidos','ALIMENTOS Y BEBIDAS',500,['AP','MA']);
   NAMES.slice(3,7).forEach((z,i)=>add('precio',z,420+i*20,['AP','MA']));
   [top(1)[0],top(2)[1],top(4)[3]].forEach((z,i)=>add('valida',z,[480,720,930][i],['FU'],'Zona de alta venta'));
-  rut.forEach((z,i)=>add('rutinario',z,480+i*20,['MA','PM']));
+  rut.forEach((z,i)=>add('rutinario',z,480+i*20,['MA','PM','FU']));
   add('rumas','MATERIALES DE CONSTRUCCION',600,['MA','PM']);
   add('rumas','PISOS Y REVESTIMIENTOS',620,['MA','PM']);
   add('cabeceras','ELECTRO HOGAR',640,['MA','PM']);
@@ -563,7 +556,7 @@ function vHoy(){
   if(DATA.length&&isSup()&&!ts.length)h+=`<div class="note">No hay plan para este día. <button class="btn sm" data-act="genAsk" style="margin-top:8px">Generar plan</button></div>`;
   h+=`<div class="pulse"><div><div class="eyebrow">Pulso operativo · ${fmtD(S.date)}</div><h3>${pct(val,ts.length)}% validado</h3><div class="mut">${val} de ${ts.length} tareas cerradas con validación.</div></div><div class="pulse-grid"><div class="pulse-m"><b>${due.length?pct(sent.length,due.length)+'%':'—'}</b><span>cumplimiento al corte</span></div><div class="pulse-m"><b>${critDue.length?pct(critOk.length,critDue.length)+'%':'—'}</b><span>críticas a tiempo</span></div><div class="pulse-m"><b>${r}</b><span>por validar</span></div><div class="pulse-m"><b>${late}</b><span>atrasadas</span></div></div><div class="card" style="background:#ffffff10;border-color:#ffffff24;color:#fff;box-shadow:none"><div class="small" style="color:#ffffffb8">Siguiente decisión</div><div class="tt" style="font-size:17px;margin:2px 0 3px">${nextAction}</div><div class="small" style="color:#ffffffd0;margin-bottom:${nextBtn?'10px':'0'}">${esc(nextText)}</div>${nextBtn}</div></div>`;
   h+=`<div class="quickbar"><button class="btn" data-act="incNew">+ Incidencia</button><button class="btn" data-act="newTask">+ Tarea manual</button></div>`;
-  h+=`<div class="sec"><div class="sec-h"><h2>Cola de decisiones</h2><span class="small mut">${items.length} acciones</span></div><div class="chips">${[['todas','Prioridad'],['validar','Validar ('+r+')'],['atrasadas','Atrasadas ('+late+')'],['criticas','Críticas'],['sindueno','Sin dueño ('+orph+')']].map(c=>`<button class="chip" data-act="filter" data-f="${c[0]}" aria-pressed="${F===c[0]}">${c[1]}</button>`).join('')}</div><div class="list">${items.length?items.slice(0,8).map(decCard).join(''):'<div class="card empty">Sin pendientes de decisión. El equipo puede continuar con su ruta.</div>'}</div></div>`;
+  h+=`<div class="sec"><div class="sec-h"><h2>Cola de decisiones</h2><span class="small mut">${items.length} acciones</span></div><div class="chips">${[['todas','Prioridad'],['validar','Validar ('+r+')'],['atrasadas','Atrasadas ('+late+')'],['criticas','Críticas'],['sindueno','Sin dueño ('+orph+')']].map(c=>`<button class="chip" data-act="filter" data-f="${c[0]}" aria-pressed="${F===c[0]}">${c[1]}</button>`).join('')}</div><div class="list">${items.length?items.slice(0,UI.allDec?999:6).map(decCard).join('')+(items.length>6?`<button class="btn full" data-act="allDec">${UI.allDec?'Ver menos':'Ver las '+items.length+' decisiones'}</button>`:''):'<div class="card empty">Sin pendientes de decisión. El equipo puede continuar con su ruta.</div>'}</div></div>`;
   h+=`<div class="sec"><div class="sec-h"><h2>Mapa operativo</h2><span class="small mut">ventas + avance</span></div><div class="seg">${[['avance','Avance'],['ventas','Ventas'],['quiebres','Quiebres']].map(m=>`<button data-act="mode" data-m="${m[0]}" aria-pressed="${UI.mode===m[0]}">${m[1]}</button>`).join('')}</div>${mapCard({mode:UI.mode,money:true,badges:true})}<div class="small mut" style="text-align:center">Toca un área para ver datos y tareas.</div></div>`;
   if(fix||orph)h+=`<div class="card callout ${fix?'bad':''}"><b>Control de cierre</b><div class="small mut">${fix?fix+' tarea(s) requieren corrección. ':''}${orph?orph+' tarea(s) siguen sin responsable.':''}</div></div>`;
   h+=`<button class="fab" data-act="newTask">+ Tarea</button>`;return h;
@@ -833,8 +826,8 @@ function loginSheet(msg){
 async function loadData(){
   try{
     try{const tm=await DB.doc('team/main').get();if(tm.exists){const d=tm.data();if((d.u||0)>(S.teamU||0)){S.team=clone(d.list);S.teamU=d.u}}}catch(e){}
-    const g=await DB.doc('datos/gestor').get();if(g.exists)setData(clone(g.data()));
-    if(canSup()){const s=await DB.doc('datos/sup').get();if(s.exists)setData(clone(s.data()))}
+    const g=await DB.doc('datos/gestor').get();if(g.exists)setData(unw(g.data()));
+    if(canSup()){const s=await DB.doc('datos/sup').get();if(s.exists)setData(unw(s.data()))}
   }catch(e){}
 }
 function boot(){
@@ -844,7 +837,7 @@ function boot(){
   AUTH.onAuthStateChanged(async u=>{
     USER=u;
     if(!u){UI.lock=true;DB=null;SYNC.s='off';render();return}
-    DB=firebase.firestore();
+    DB=firebase.firestore();if(!window.__persist){window.__persist=1;try{DB.enablePersistence({synchronizeTabs:true}).catch(()=>{})}catch(e){}}
     UI.lock=false;$('#sheet').classList.remove('on');
     await loadData();
     initSync(DB);
@@ -898,13 +891,13 @@ const ACTS={
  range:el=>{UI.range=el.dataset.r;render()},
  acc:el=>{UI.open[el.dataset.id]=!UI.open[el.dataset.id];render()},
  taskOpen:el=>taskSheet(el.dataset.id),
- st:el=>{const t=S.tasks.find(x=>x.id===el.dataset.id);if(!t)return;t.s=el.dataset.s;if(!t.startAt)t.startAt=Date.now();pt(t);save();render();toast('Tarea iniciada')},
+ st:el=>{const t=S.tasks.find(x=>x.id===el.dataset.id);if(!t)return;t.s=el.dataset.s;if(!t.startAt)t.startAt=Date.now();ptK(t,['s','startAt']);save();render();toast('Tarea iniciada')},
  finishOpen:el=>finishSheet(el.dataset.id),
  phDel:el=>{UI.shot.photos.splice(+el.dataset.i,1);shotUI()},
  sendVal:el=>{
   const t=S.tasks.find(x=>x.id===el.dataset.id);if(!t||!UI.shot)return;
   t.ph=UI.shot.photos.slice();t.note=($('#ph-note')&&$('#ph-note').value.trim())||t.note;t.s='R';t.doneAt=Date.now();t.submitCount=(t.submitCount||0)+1;
-  UI.shot=null;pt(t);save();$('#sheet').classList.remove('on');render();toast('Enviada a validar')},
+  UI.shot=null;ptK(t,['ph','note','s','doneAt','submitCount']);save();$('#sheet').classList.remove('on');render();toast('Enviada a validar')},
  newTask:el=>sheet(taskForm(null,el.dataset&&el.dataset.z)+`<button class="btn pri full" data-act="saveTask">Crear tarea</button>`),
  saveTask:el=>{
   const id=el.dataset.id;const f={type:$('#t-type').value,zone:$('#t-zone').value,who:$('#t-who').value,time:toMin($('#t-time').value),note:$('#t-note').value.trim(),crit:$('#t-crit').checked};
@@ -940,7 +933,8 @@ const ACTS={
  logout:()=>{PEND.clear();S.role=null;S.me=null;S.tasks=[];S.inc=[];S.team=defaultTeam();S.teamU=0;setData(null);save();if(AUTH)AUTH.signOut()},
  dataSheet:()=>sheet(`${head('Cargar datos de ventas')}<div class="small mut">Elige el archivo <b>datos_ventas.json</b>. Se guarda en tu base de datos y los gestores solo reciben el orden de ventas, sin montos.</div><label class="shot" for="up-in">Elegir archivo</label><input class="vh" type="file" accept=".json,application/json" id="up-in" data-chg="dataUp">`),
  incAdd:()=>{const i={id:uid(),d:todayStr(),t:$('#i-t').value,z:$('#i-z').value,c:$('#i-c').value,sku:$('#i-s').value.trim(),n:$('#i-n').value.trim(),by:isSup()?'':S.me,fixed:false,del:false};S.inc.push(i);pi(i);save();closeSheet();render();toast('Incidencia guardada')},
- incFix:el=>{const i=S.inc.find(x=>x.id===el.dataset.id);i.fixed=true;i.fixedAt=Date.now();pi(i);save();render()},
+ allDec:()=>{UI.allDec=!UI.allDec;render()},
+ incFix:el=>{const i=S.inc.find(x=>x.id===el.dataset.id);i.fixed=true;i.fixedAt=Date.now();piK(i,['fixed','fixedAt']);save();render()},
  targetSheet:()=>sheet(`${head('Metas de control')}<div class="note">Metas provisionales. Ajusta después de obtener una línea base real.</div><div class="grid2"><label class="f">Cumplimiento mínimo %<input type="number" id="tg-plan" min="0" max="100" value="${S.targets.plan}"></label><label class="f">Críticas a tiempo %<input type="number" id="tg-crit" min="0" max="100" value="${S.targets.crit}"></label><label class="f">Primera pasada %<input type="number" id="tg-fpy" min="0" max="100" value="${S.targets.fpy}"></label><label class="f">Traspaso máximo %<input type="number" id="tg-carry" min="0" max="100" value="${S.targets.carry}"></label><label class="f">Validación ≤30 min %<input type="number" id="tg-sla" min="0" max="100" value="${S.targets.sla}"></label></div><button class="btn pri full" data-act="saveTargets">Guardar metas</button>`),
  saveTargets:()=>{const n=id=>Math.max(0,Math.min(100,+$(id).value||0));S.targets={plan:n('#tg-plan'),crit:n('#tg-crit'),fpy:n('#tg-fpy'),carry:n('#tg-carry'),sla:n('#tg-sla')};save();closeSheet();render();toast('Metas actualizadas')},
  startSheet:()=>sheet(`${head('Inicio del plan 30-60-90')}<label class="f">Fecha de inicio<input type="date" id="st-d" value="${S.start}"></label><button class="btn pri full" data-act="saveStart">Guardar</button>`),
@@ -960,7 +954,7 @@ document.addEventListener('change',async e=>{
   else if(k==='dataUp'){
     const f=el.files[0];el.value='';if(!f||!DB||!canSup())return;
     try{const o=JSON.parse(await f.text());if(!o.gestor||!o.sup)throw 0;
-      await DB.doc('datos/gestor').set(clone(o.gestor));await DB.doc('datos/sup').set(clone(o.sup));
+      await DB.doc('datos/gestor').set({j:JSON.stringify(o.gestor)});await DB.doc('datos/sup').set({j:JSON.stringify(o.sup)});
       setData(clone(o.sup));closeSheet();render();toast('Datos de ventas cargados')}
     catch(err){toast('No se pudo cargar el archivo')}
   }
@@ -971,6 +965,7 @@ document.addEventListener('change',async e=>{
     if(UI.shot)shotUI();
   }
 });
+window.addEventListener('online',()=>hdr());window.addEventListener('offline',()=>hdr());
 render();
 boot();
 if('serviceWorker' in navigator&&/^https?:/.test(location.protocol))navigator.serviceWorker.register('sw.js').catch(()=>{});
