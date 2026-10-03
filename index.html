@@ -295,7 +295,7 @@ function save(){
   try{S.tasks.forEach(t=>{if(t.date<old&&t.ph)t.ph=[]});writeLS();return}catch(e){}
   try{S.tasks.forEach(t=>{if(t.ph)t.ph=[]});writeLS()}catch(e){}
 }
-function toast(m){const t=$('#toast');t.textContent=m;t.classList.add('on');clearTimeout(toast.t);toast.t=setTimeout(()=>t.classList.remove('on'),2400)}
+function toast(m){const t=$('#toast');t.textContent=m;t.classList.add('on');clearTimeout(toast.t);toast.t=setTimeout(()=>t.classList.remove('on'),m.length>40?7000:2400)}
 
 /* ===== Estado ===== */
 function defaultTeam(){
@@ -956,7 +956,7 @@ document.addEventListener('change',async e=>{
     try{const o=JSON.parse(await f.text());if(!o.gestor||!o.sup)throw 0;
       await DB.doc('datos/gestor').set({j:JSON.stringify(o.gestor)});await DB.doc('datos/sup').set({j:JSON.stringify(o.sup)});
       setData(clone(o.sup));closeSheet();render();toast('Datos de ventas cargados')}
-    catch(err){toast('No se pudo cargar el archivo')}
+    catch(err){console.error(err);toast('No se pudo cargar: '+String((err&&(err.code||err.message))||err).slice(0,100))}
   }
   else if(k==='photo'){
     const files=[...el.files];el.value='';
